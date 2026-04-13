@@ -1,0 +1,85 @@
+import utime
+import gc
+
+from lcd_api import LcdApi
+from machine import I2C
+
+# PCF8574 pin definitions
+MASK_RS = 0x01       # P0
+MASK_RW = 0x02       # P1
+MASK_E  = 0x04       # P2
+
+SHIFT_BACKLIGHT = 3  # P3
+SHIFT_DATA      = 4  # P4-P7
+
+
+class I2cLcd(LcdApi):
+    # HD44780 LCD driver over a PCF8574 I2C backpack.
+
+    def __init__(self, i2c, i2c_addr, num_lines, num_columns):
+        self.i2c = i2c
+        self.i2c_addr = i2c_addr
+        self.i2c.writeto(self.i2c_addr, bytes([0]))
+        utime.sleep_ms(20)   # Allow LCD time to power up
+
+        # Send reset 3 times, then switch to 4-bit mode.
+        self.hal_write_init_nibble(self.LCD_FUNCTION_RESET)
+        utime.sleep_ms(5)
+        self.hal_write_init_nibble(self.LCD_FUNCTION_RESET)
+        utime.sleep_ms(1)
+        self.hal_write_init_nibble(self.LCD_FUNCTION_RESET)
+        utime.sleep_ms(1)
+        self.hal_write_init_nibble(self.LCD_FUNCTION)
+        utime.sleep_ms(1)
+
+        LcdApi.__init__(self, num_lines, num_columns)
+        cmd = self.LCD_FUNCTION
+        if num_lines > 1:
+            cmd |= self.LCD_FUNCTION_2LINES
+        self.hal_write_command(cmd)
+        gc.collect()
+
+    def hal_write_init_nibble(self, nibble):
+        # Write an initialization nibble during LCD startup.
+        byte = ((nibble >> 4) & 0x0f) << SHIFT_DATA
+        self.i2c.writeto(self.i2c_addr, bytes([byte | MASK_E]))
+        self.i2c.writeto(self.i2c_addr, bytes([byte]))
+        gc.collect()
+
+    def hal_backlight_on(self):
+        # Turn the LCD backlight on.
+        self.i2c.writeto(self.i2c_addr, bytes([1 << SHIFT_BACKLIGHT]))
+        gc.collect()
+
+    def hal_backlight_off(self):
+        # Turn the LCD backlight off.
+        self.i2c.writeto(self.i2c_addr, bytes([0]))
+        gc.collect()
+
+    def hal_write_command(self, cmd):
+        # Write one command byte to the LCD.
+        byte = ((self.backlight << SHIFT_BACKLIGHT) |
+                (((cmd >> 4) & 0x0f) << SHIFT_DATA))
+        self.i2c.writeto(self.i2c_addr, bytes([byte | MASK_E]))
+        self.i2c.writeto(self.i2c_addr, bytes([byte]))
+        byte = ((self.backlight << SHIFT_BACKLIGHT) |
+                ((cmd & 0x0f) << SHIFT_DATA))
+        self.i2c.writeto(self.i2c_addr, bytes([byte | MASK_E]))
+        self.i2c.writeto(self.i2c_addr, bytes([byte]))
+        if cmd <= 3:
+            utime.sleep_ms(5)
+        gc.collect()
+
+    def hal_write_data(self, data):
+        # Write one data byte to the LCD.
+        byte = (MASK_RS |
+                (self.backlight << SHIFT_BACKLIGHT) |
+                (((data >> 4) & 0x0f) << SHIFT_DATA))
+        self.i2c.writeto(self.i2c_addr, bytes([byte | MASK_E]))
+        self.i2c.writeto(self.i2c_addr, bytes([byte]))
+        byte = (MASK_RS |
+                (self.backlight << SHIFT_BACKLIGHT) |
+                ((data & 0x0f) << SHIFT_DATA))
+        self.i2c.writeto(self.i2c_addr, bytes([byte | MASK_E]))
+        self.i2c.writeto(self.i2c_addr, bytes([byte]))
+        gc.collect()
